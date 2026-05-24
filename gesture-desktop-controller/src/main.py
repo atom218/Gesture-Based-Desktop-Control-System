@@ -143,9 +143,11 @@ def run() -> None:
                     landmarks=tracked_hand.landmarks,
                     handedness=tracked_hand.handedness,
                 )
-                pinch_active = (
-                    gesture_result.pinch_distance_ratio < config.CLICK_PINCH_THRESHOLD_RATIO
-                )
+                pinch_ratio = gesture_result.pinch_distance_ratio
+                index_extended = gesture_result.finger_states.get("index", False)
+                pinch_raw_active = pinch_ratio < config.CLICK_PINCH_THRESHOLD_RATIO
+                # Display/use pinch only when index is part of the gesture intent.
+                pinch_active = pinch_raw_active and index_extended
                 toggled = state_manager.update_toggle(
                     closed_fist_detected=(gesture_result.fingers_up_count == 0),
                     now_seconds=now,
@@ -169,7 +171,7 @@ def run() -> None:
                     hand_x = tracked_hand.landmarks[INDEX_TIP_ID].x
                     navigated, selected, timed_out = app_switcher.update_mode(
                         hand_x_norm=hand_x,
-                        pinch_active=pinch_active,
+                        pinch_active=pinch_raw_active,
                         now_seconds=now,
                     )
                     if selected:
@@ -231,25 +233,48 @@ def run() -> None:
 
                 click_ready_hand_shape = (
                     state_manager.is_active
+                    and index_extended
                     and not gesture_result.finger_states.get("middle", False)
                     and not gesture_result.finger_states.get("ring", False)
                     and not gesture_result.finger_states.get("pinky", False)
                 )
                 if click_ready_hand_shape and (
-                    gesture_result.pinch_distance_ratio < config.CLICK_ARM_THRESHOLD_RATIO
+                    pinch_ratio < config.CLICK_ARM_THRESHOLD_RATIO
                 ):
                     click_aim_lock = True
                 elif (
                     not click_ready_hand_shape
-                    or gesture_result.pinch_distance_ratio > config.CLICK_RELEASE_THRESHOLD_RATIO
+                    or pinch_ratio > config.CLICK_RELEASE_THRESHOLD_RATIO
                 ):
                     click_aim_lock = False
 
+                brightness_mode_active = (
+                    state_manager.is_active
+                    and gesture_result.finger_states.get("index", False)
+                    and gesture_result.finger_states.get("middle", False)
+                    and not gesture_result.finger_states.get("thumb", False)
+                    and not gesture_result.finger_states.get("ring", False)
+                    and not gesture_result.finger_states.get("pinky", False)
+                )
+
+                palm_width = (
+                    ((tracked_hand.landmarks[5].x - tracked_hand.landmarks[17].x) ** 2)
+                    + ((tracked_hand.landmarks[5].y - tracked_hand.landmarks[17].y) ** 2)
+                ) ** 0.5
+                thumb_extension = (
+                    ((tracked_hand.landmarks[4].x - tracked_hand.landmarks[2].x) ** 2)
+                    + ((tracked_hand.landmarks[4].y - tracked_hand.landmarks[2].y) ** 2)
+                ) ** 0.5
+                thumb_extension_ready = (
+                    palm_width > 1e-6
+                    and thumb_extension > (config.VOLUME_THUMB_EXTENSION_RATIO * palm_width)
+                )
                 volume_thumb_ready = (
                     gesture_result.finger_states.get("thumb", False)
                     or (
-                        gesture_result.pinch_distance_ratio
+                        pinch_ratio
                         > config.VOLUME_THUMB_RELAXED_SPREAD_RATIO
+                        and thumb_extension_ready
                     )
                 )
                 volume_mode_active = (
@@ -259,6 +284,7 @@ def run() -> None:
                     and gesture_result.finger_states.get("middle", False)
                     and not gesture_result.finger_states.get("ring", False)
                     and not gesture_result.finger_states.get("pinky", False)
+                    and not brightness_mode_active
                 )
                 if volume_mode_active:
                     volume_changed, volume_direction, volume_level = volume_controller.update(
@@ -284,14 +310,6 @@ def run() -> None:
                         active=False,
                     )
 
-                brightness_mode_active = (
-                    state_manager.is_active
-                    and gesture_result.finger_states.get("index", False)
-                    and gesture_result.finger_states.get("middle", False)
-                    and not gesture_result.finger_states.get("thumb", False)
-                    and not gesture_result.finger_states.get("ring", False)
-                    and not gesture_result.finger_states.get("pinky", False)
-                )
                 if brightness_mode_active and not volume_mode_active:
                     middle_tip = tracked_hand.landmarks[MIDDLE_TIP_ID]
                     brightness_changed, brightness_level = brightness_controller.update(
@@ -316,14 +334,17 @@ def run() -> None:
 
                 index_only_active = (
                     state_manager.is_active
-                    and gesture_result.finger_states.get("index", False)
+                    and index_extended
                     and not gesture_result.finger_states.get("thumb", False)
                     and not gesture_result.finger_states.get("middle", False)
                     and not gesture_result.finger_states.get("ring", False)
                     and not gesture_result.finger_states.get("pinky", False)
                 )
+                # Pre-lock cursor before full pinch to reduce pre-click drift.
+                if index_only_active and pinch_ratio < config.CLICK_PRELOCK_RATIO:
+                    click_aim_lock = True
                 thumb_far_from_index = (
-                    gesture_result.pinch_distance_ratio > config.CLICK_ARM_THRESHOLD_RATIO
+                    pinch_ratio > (config.CLICK_ARM_THRESHOLD_RATIO + 0.03)
                 )
                 if (
                     index_only_active
@@ -342,7 +363,7 @@ def run() -> None:
                     mouse_controller.reset()
 
                 click_triggered = mouse_controller.maybe_left_click(
-                    pinch_distance_ratio=gesture_result.pinch_distance_ratio,
+                    pinch_distance_ratio=pinch_ratio,
                     click_ready=(click_ready_hand_shape and not brightness_mode_active and not volume_mode_active),
                     pinch_press_threshold=config.CLICK_PINCH_THRESHOLD_RATIO,
                     pinch_release_threshold=config.CLICK_RELEASE_THRESHOLD_RATIO,
