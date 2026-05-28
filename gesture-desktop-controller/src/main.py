@@ -24,14 +24,36 @@ INDEX_TIP_ID = 8
 MIDDLE_TIP_ID = 12
 
 
+def _open_camera() -> cv2.VideoCapture:
+    """Open the preferred camera, prioritizing external webcams."""
+    camera_indices = (
+        (config.CAMERA_INDEX,)
+        if config.CAMERA_INDEX is not None
+        else config.CAMERA_PRIORITY
+    )
+
+    for camera_index in camera_indices:
+        capture = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
+
+        ok, _ = capture.read()
+        if capture.isOpened() and ok:
+            print(f"Using camera index {camera_index}")
+            return capture
+
+        capture.release()
+
+    raise RuntimeError(
+        "Unable to open webcam. Check camera permissions/device index."
+    )
+
+
 def run() -> None:
     """Run the basic finger-recognition demo loop."""
-    capture = cv2.VideoCapture(config.CAMERA_INDEX)
+    capture = _open_camera()
     capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
-
-    if not capture.isOpened():
-        raise RuntimeError("Unable to open webcam. Check camera permissions/device index.")
 
     tracker = HandTracker()
     detector = GestureDetector(pinch_threshold_ratio=config.CLICK_PINCH_THRESHOLD_RATIO)
@@ -72,9 +94,6 @@ def run() -> None:
             ok, frame = capture.read()
             if not ok:
                 break
-
-            # Mirror preview for natural interaction.
-            frame = cv2.flip(frame, 1)
 
             now = time.perf_counter()
             fps = 1.0 / max(now - previous_time, 1e-6)

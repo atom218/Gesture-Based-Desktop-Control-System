@@ -4,7 +4,10 @@ This module will store tunable constants, thresholds, and runtime options
 shared across tracking, gesture, and control components.
 """
 
-CAMERA_INDEX = 0
+# Set to an integer camera index to force a specific camera.
+# Leave as None to automatically prefer an external webcam when available.
+CAMERA_INDEX = None
+CAMERA_PRIORITY = (1, 2, 3, 4, 0)
 WINDOW_NAME = "Gesture Desktop Controller - Finger Recognition Demo"
 
 # MediaPipe Hands parameters
